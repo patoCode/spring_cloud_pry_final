@@ -1,5 +1,6 @@
 package com.cinema.booking_service.config;
 
+import com.cinema.booking_service.infrastructure.client.AuthTokenRelayInterceptor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +18,7 @@ public class RestClientConfig {
     public RestClient movieServiceClient() {
         return RestClient.builder()
                 .baseUrl(movieServiceUrl)
+                .requestInterceptor(new AuthTokenRelayInterceptor())
                 .build();
     }
 }

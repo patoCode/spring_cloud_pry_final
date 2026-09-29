@@ -6,6 +6,68 @@
 	},
 	"item": [
 		{
+			"name": "Auth Service",
+			"item": [
+				{
+					"name": "Get Token (client_credentials)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Token obtenido', () => pm.response.to.have.status(200));",
+									"pm.environment.set('TOKEN', pm.response.json().access_token);"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "cinema-client",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "cinema-secret",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials"
+								},
+								{
+									"key": "scope",
+									"value": "cinema"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{AUTH_URL}}/oauth2/token",
+							"host": [
+								"{{AUTH_URL}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
 			"name": "Movie Service",
 			"item": [
 				{

@@ -36,7 +36,7 @@ public class MovieServiceClientAdapter implements MovieServiceClientPort {
         log.info("Attempting to reserve seat for screening: {}", screeningId);
         movieServiceClient.patch()
                 .uri("/screenings/{id}/reserve", screeningId)
-                // Note: Normally we'd pass Auth headers here, assuming simple internal calls or token relay is configured
+                // Auth: AuthTokenRelayInterceptor reenvía el Authorization del request entrante
                 .retrieve()
                 .toBodilessEntity();
     }

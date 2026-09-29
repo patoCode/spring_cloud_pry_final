@@ -1,0 +1,45 @@
+server:
+  port: 50003
+
+spring:
+  application:
+    name: auth-service
+  security:
+    oauth2:
+      authorizationserver:
+        issuer: http://localhost:50003
+        client:
+          cinema-client:
+            registration:
+              client-id: cinema-client
+              client-secret: "{noop}cinema-secret"
+              client-name: Cinema Services
+              client-authentication-methods:
+                - client_secret_basic
+              authorization-grant-types:
+                - client_credentials
+              scopes:
+                - cinema
+            token:
+              access-token-time-to-live: 30m
+          cinema-swagger:
+            registration:
+              client-id: cinema-swagger
+              client-name: Cinema Swagger UI
+              client-authentication-methods:
+                - none
+              authorization-grant-types:
+                - authorization_code
+                - refresh_token
+              redirect-uris:
+                - http://localhost:51100/swagger-ui/oauth2-redirect-custom.html
+                - http://localhost:51200/swagger-ui/oauth2-redirect-custom.html
+              scopes:
+                - openid
+                - profile
+                - cinema
+            require-proof-key: true
+
+logging:
+  level:
+    org.springframework.security: INFO

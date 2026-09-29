@@ -1,7 +1,9 @@
 /*
 !/movie-service/
 !/booking-service/
+!/auth-service/
 !/docker/
 !/postman/
+!/docker-compose.yml
 !/.gitignore
 !/README.md

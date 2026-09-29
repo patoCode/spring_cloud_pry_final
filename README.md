@@ -39,14 +39,27 @@ Gestor de las reservas de los clientes y orquestador del flujo SAGA.
 *   Maven configurado en el sistema.
 
 ### 1. Levantar la Base de Datos
-1. Ejecutar un contenedor de PostgreSQL (por ejemplo, en el puerto `5432` con usuario `admin` y contraseña `password`).
-2. Ejecutar el script `docker/init-db/create-databases.sql` para crear las bases de datos `moviedb` y `bookingdb` con sus permisos correspondientes.
+Desde la raíz del proyecto:
+```bash
+docker compose up -d
+```
+Levanta PostgreSQL (`cinema-postgres`, puerto `5432`, usuario `admin` / contraseña `password`) y ejecuta `docker/init-db/create-databases.sql` en el primer arranque para crear `moviedb` y `bookingdb`.
 
 ### 2. Levantar el Auth-Service
-Debes levantar el servicio de autenticación proporcionado durante el curso en el puerto `50003`, el cual servirá como emisor (Issuer) de los JWT para los microservicios de cine.
+```bash
+cd auth-service
+mvn clean compile spring-boot:run
+```
+Es el emisor (Issuer) de los JWT en el puerto `50003` (`http://localhost:50003`), expone OIDC Discovery y JWKS. **Debe estar arriba antes** que los microservicios, ya que validan el `issuer-uri` al arrancar.
+
+Clientes registrados:
+*   `cinema-client` / secreto `cinema-secret` → `client_credentials` (automatizable con curl/Postman).
+*   `cinema-swagger` (público, PKCE) → `authorization_code` para los Swagger UI.
+
+Usuarios en memoria para el flujo de login: `demo`/`demo` y `admin`/`admin`.
 
 ### 3. Compilar e Iniciar los Servicios
-Para arrancar los microservicios, abre dos terminales separadas en la raíz de cada proyecto y ejecuta:
+Orden recomendado: **Docker → auth-service → movie-service → booking-service**. En dos terminales separadas:
 
 **Para Movie Service:**
 ```bash
@@ -63,8 +76,12 @@ mvn clean compile spring-boot:run
 
 ### 4. Pruebas y Uso
 Una vez iniciados:
-1. Accede a los Swagger UI mencionados arriba.
-2. Autoriza tu sesión en Swagger utilizando un token "Bearer JWT" válido (generado por tu `auth-service` en el puerto `50003`).
-3. Realiza la prueba del camino feliz creando una reserva en `POST /bookings`.
-4. Verifica que el asiento se ha descontado llamando a `GET /screenings/{id}`.
-5. Intenta realizar una reserva en una sala llena para forzar y visualizar cómo la compensación del SAGA marca automáticamente el estado del booking en `CANCELLED`.
+1. Obtén un token:
+   ```bash
+   curl -u cinema-client:cinema-secret -d grant_type=client_credentials -d scope=cinema http://localhost:50003/oauth2/token
+   ```
+   O bien ejecuta en Postman el request **Auth Service → Get Token (client_credentials)**, que guarda el token en la variable `TOKEN`.
+2. Accede a los Swagger UI y pega el token en **Authorize** (Bearer JWT), o usa la colección `postman/Cinema_System.postman_collection.json`.
+3. Realiza la prueba del camino feliz creando una reserva en `POST /bookings` (201 + estado `CONFIRMED`).
+4. Verifica que el asiento se ha descontado llamando a `GET /screenings/{id}`. El `booking-service` reenvía el JWT recibido hacia `movie-service` (token relay), por lo que `PATCH /screenings/{id}/reserve` autentica correctamente.
+5. Cancela la reserva con `PATCH /bookings/{id}/cancel` (SAGA inverso: libera el asiento) o intenta reservar en una sala llena para ver la compensación en los logs del `booking-service` (`Fallo al reservar asiento. Ejecutando compensación`).
