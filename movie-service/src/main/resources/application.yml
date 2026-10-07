@@ -23,3 +23,7 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: http://localhost:50003 # URL de tu auth-service
+
+springdoc:
+  swagger-ui:
+    path: /api/v1/swagger-ui.html

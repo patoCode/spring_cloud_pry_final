@@ -46,6 +46,7 @@ public class ScreeningRepositoryAdapter implements ScreeningRepositoryPort {
                 .totalSeats(domain.getTotalSeats())
                 .availableSeats(domain.getAvailableSeats())
                 .active(domain.isActive())
+                .version(domain.getVersion())
                 .build();
     }
 
@@ -58,6 +59,7 @@ public class ScreeningRepositoryAdapter implements ScreeningRepositoryPort {
                 .totalSeats(entity.getTotalSeats())
                 .availableSeats(entity.getAvailableSeats())
                 .active(entity.isActive())
+                .version(entity.getVersion())
                 .build();
     }
 }

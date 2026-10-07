@@ -7,10 +7,11 @@ import com.cinema.booking_service.domain.BookingStatus;
 import com.cinema.booking_service.domain.MovieServiceClientPort;
 import com.cinema.booking_service.exception.InvalidBookingStateException;
 import com.cinema.booking_service.exception.ResourceNotFoundException;
+import com.cinema.booking_service.exception.SagaFailedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
 
 import java.util.UUID;
 
@@ -22,49 +23,56 @@ public class BookingService {
     private final BookingRepositoryPort repositoryPort;
     private final MovieServiceClientPort movieClient;
 
-    @Transactional
+    /**
+     * SAGA de reserva (4 pasos).
+     *
+     * No lleva @Transactional: cada save corre en su propia transacción local (Spring Data
+     * JPA), que se confirma al terminar la llamada. Así la compensación CANCELLED sobrevive
+     * aunque el request falle después. SAGA = transacciones locales + compensaciones,
+     * nunca una transacción global que se revierta entera.
+     */
     public Booking createBooking(Booking booking) {
-        // SAGA Paso 1: Verificar función disponible
+        // Paso 1: verificar función disponible
         ScreeningDto screening;
         try {
             screening = movieClient.getScreening(booking.getScreeningId());
-            if (screening.getAvailableSeats() <= 0) {
-                throw new InvalidBookingStateException("Función sin asientos disponibles");
-            }
         } catch (Exception e) {
-            throw new InvalidBookingStateException("No se pudo verificar la función o no hay asientos: " + e.getMessage());
+            throw new InvalidBookingStateException(
+                    "No se pudo verificar la función " + booking.getScreeningId() + ": " + e.getMessage());
+        }
+        if (screening.getAvailableSeats() == null || screening.getAvailableSeats() <= 0) {
+            throw new InvalidBookingStateException("Función sin asientos disponibles");
         }
 
-        // Snapshot
-        // Asumiendo que podemos obtener el titulo, aunque ScreeningDto no lo tiene.
-        // Simplificación: omitido si no está en el DTO, pero la regla pide movieTitle snapshot.
-        // Si el DTO no lo tiene, lo dejaremos en blanco por ahora, o podrías buscar la movie.
-        booking.setMovieTitle("Snapshot-Title"); // TODO: Obtener título real si se requiere
+        // Snapshot: se copia del screening al crear la reserva y no cambia después.
+        booking.setMovieTitle(screening.getMovieTitle());
 
-        // SAGA Paso 2: Crear booking PENDING
+        // Paso 2: crear booking en estado PENDING
         booking.setStatus(BookingStatus.PENDING);
         Booking savedBooking = repositoryPort.save(booking);
-
         UUID bookingId = savedBooking.getId();
         boolean seatReserved = false;
 
         try {
-            // SAGA Paso 3: Reservar asiento en movie-service
-            movieClient.reserveSeat(booking.getScreeningId());
-            seatReserved = true;
+            // Paso 3: reservar asiento en movie-service (con @Retry)
+            movieClient.reserveSeat(savedBooking.getScreeningId());
+            seatReserved = true; // ← se actualiza DESPUÉS de completar el paso
 
-            // SAGA Paso 4: Confirmar booking
+            // Paso 4: confirmar booking
             savedBooking.confirm();
             return repositoryPort.save(savedBooking);
-            
-        } catch (Exception e) {
-            log.error("Fallo al reservar asiento. Ejecutando compensación. Error: {}", e.getMessage());
-            // Compensación: si falla, cancelar localmente
-            if (bookingId != null) {
-                savedBooking.cancel();
-                repositoryPort.save(savedBooking);
+        } catch (RuntimeException e) {
+            log.error("SAGA de reserva falló. Ejecutando compensaciones. Error: {}", e.getMessage());
+            if (seatReserved) {
+                compensate("release_seat", () -> movieClient.releaseSeat(savedBooking.getScreeningId()));
             }
-            throw new RuntimeException("Error en reserva SAGA, booking cancelado: " + e.getMessage());
+            if (bookingId != null) {
+                compensate("cancel_booking", () -> {
+                    savedBooking.cancel();
+                    repositoryPort.save(savedBooking);
+                });
+            }
+            throw translate(e);
         }
     }
 
@@ -73,16 +81,43 @@ public class BookingService {
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found: " + id));
     }
 
-    @Transactional
+    /**
+     * SAGA inverso de cancelación. El estado CANCELLED se persiste ANTES de la llamada
+     * remota: si liberar el asiento falla, se loguea y NO se revierte (best-effort).
+     */
     public Booking cancelBooking(UUID id) {
-        // SAGA Inverso Paso 1 y 2
+        // Paso 1: verificar que existe (404) y puede cancelarse (422 si ya estaba CANCELLED)
         Booking booking = getById(id);
-        booking.cancel(); // Valida si ya estaba cancelado (lanza excepción)
+        booking.cancel();
+
+        // Paso 2: actualizar booking a CANCELLED
         Booking saved = repositoryPort.save(booking);
 
-        // SAGA Inverso Paso 3: Liberar asiento (best-effort)
-        movieClient.releaseSeat(booking.getScreeningId());
-        
+        // Paso 3: liberar asiento en movie-service (best-effort, absorbido en el adapter)
+        movieClient.releaseSeat(saved.getScreeningId());
+
         return saved;
+    }
+
+    private void compensate(String step, Runnable action) {
+        try {
+            action.run();
+        } catch (Exception ex) {
+            log.warn("Compensación '{}' falló (best-effort, no se revierte): {}", step, ex.getMessage());
+        }
+    }
+
+    private RuntimeException translate(RuntimeException e) {
+        if (e instanceof InvalidBookingStateException) {
+            return e;
+        }
+        if (e instanceof HttpClientErrorException clientError) {
+            // 422 de movie-service (sin asientos) u otro 4xx: violación de invariante.
+            return new InvalidBookingStateException("movie-service rechazó la reserva ("
+                    + clientError.getStatusCode().value() + "): " + clientError.getMessage());
+        }
+        // Fallo de red / 5xx / servicio inaccesible tras agotar los reintentos.
+        return new SagaFailedException("SAGA abortado tras reintentos: no se pudo contactar con movie-service. "
+                + e.getMessage(), e);
     }
 }

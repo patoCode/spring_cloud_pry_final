@@ -8,16 +8,29 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
 
+import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
 @Configuration
 @EnableWebSecurity
-public class SecurityConfig {
+public class SecurityConfig implements WebMvcConfigurer {
+
+    @Override
+    public void addViewControllers(ViewControllerRegistry registry) {
+        registry.addRedirectViewController("/swagger-ui.html", "/api/v1/swagger-ui.html");
+    }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/**").permitAll()
+                .requestMatchers(
+                    "/v3/api-docs", "/v3/api-docs/", "/v3/api-docs/**",
+                    "/swagger-ui/**", "/swagger-ui.html",
+                    "/api/v1/swagger-ui/**", "/api/v1/swagger-ui.html",
+                    "/error", "/actuator/**"
+                ).permitAll()
                 .requestMatchers(HttpMethod.GET, "/movies/**", "/screenings/**").permitAll()
                 .anyRequest().authenticated()
             )

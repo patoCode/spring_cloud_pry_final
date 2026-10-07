@@ -1,87 +1,290 @@
-# Sistema de Reserva de Cine - Proyecto Final
+# 🎬 Sistema de Reserva de Cine — Proyecto Final
 
-Este proyecto es una implementación simplificada de un sistema de reserva de entradas de cine, construido aplicando patrones de microservicios como **SAGA**, **Domain-Driven Design (DDD)**, y **Arquitectura Hexagonal**, correspondientes al proyecto final del Curso Spring Boot Cloud.
+¡Bienvenido! Esta entrega contiene la implementación completa del proyecto final para el curso **Spring Boot Cloud (Spring Boot 4 & Java 21/25)**. 
 
-## Arquitectura y Patrones Implementados
+> [!IMPORTANT]
+> **Modo de Entrega:** Este proyecto se entrega directamente en un **archivo comprimido (`.zip` / `.rar`)**. **No se utilizará Git ni control de versiones** para esta entrega. Basta con descomprimir la carpeta en cualquier PC y seguir los pasos indicados a continuación.
 
-El sistema consta de dos microservicios principales que se comunican de forma síncrona mediante llamadas REST, orquestando una transacción distribuida con el patrón **SAGA**.
-
-*   **Arquitectura Hexagonal:** Ambos servicios separan estrictamente el código en capas `api`, `application`, `domain`, `infrastructure` y `exception`.
-*   **Domain-Driven Design (DDD):** Entidades de dominio ricas con invariantes de negocio encapsuladas (ej. la reserva no permite asientos negativos `availableSeats < 0`).
-*   **SAGA de 2 Pasos:** `booking-service` actúa como orquestador. Las reservas crean un estado inicial (`PENDING`), se comunican con `movie-service` para confirmar el asiento, y en caso de éxito se marcan como `CONFIRMED`. Si hay fallo de red o falta de asientos, la reserva se compensa marcándose como `CANCELLED`.
-*   **Seguridad:** Integración con OAuth2 JWT Resource Server en ambos microservicios.
-*   **Resiliencia:** Uso de la anotación `@Retryable` en la comunicación REST para manejar fallos de red esporádicos con *backoff*.
-*   **Documentación:** API completamente documentada con OpenAPI (Swagger) accesible vía web.
+El sistema modela una plataforma de reservas de cine distribuida en **microservicios**, aplicando los patrones clave aprendidos durante el curso: **Arquitectura Hexagonal**, **Domain-Driven Design (DDD)**, el patrón de transacciones distribuidas **SAGA** de 2 pasos, **Seguridad OAuth2 / JWT Resource Server**, **Resiliencia con @Retry** y documentación viva con **OpenAPI / Swagger UI**.
 
 ---
 
-## Servicios
+## 🏛️ 1. Arquitectura del Sistema
 
-### 1. `movie-service` (Puerto: 51100)
-Administra el catálogo de películas y la disponibilidad de las funciones.
-*   **Base de datos:** `moviedb` (PostgreSQL)
-*   **Entidades:** `Movie` y `Screening`.
-*   **Swagger UI:** [http://localhost:51100/swagger-ui.html](http://localhost:51100/swagger-ui.html)
+El sistema está dividido en dos microservicios de negocio independientes y un servicio emisor de seguridad:
 
-### 2. `booking-service` (Puerto: 51200)
-Gestor de las reservas de los clientes y orquestador del flujo SAGA.
-*   **Base de datos:** `bookingdb` (PostgreSQL)
-*   **Entidad:** `Booking` (con variables de estado `PENDING`, `CONFIRMED`, `CANCELLED`).
-*   **Swagger UI:** [http://localhost:51200/swagger-ui.html](http://localhost:51200/swagger-ui.html)
+```text
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                      Cliente / Postman / Swagger UI                    │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │ Bearer JWT
+                       ┌─────────────▼─────────────┐
+                       │        auth-service       │ (Puerto: 50003)
+                       │  POST /oauth2/token → JWT │
+                       └─────────────┬─────────────┘
+                                     │ Bearer JWT
+          ┌──────────────────────────┴──────────────────────────┐
+          │                                                     │ Bearer JWT
+┌─────────▼──────────────┐   RestClient (@LoadBalanced)   ┌─────▼──────────────────┐
+│     movie-service      │ ◄───────────────────────────── │    booking-service     │
+│  - Catálogo Películas  │           Llamadas SAGA        │  - Orquestador Reservas│
+│  - Funciones / Salas   │                                │  - SAGA: reserva/cancel│
+│  Puerto: 51100         │                                │  Puerto: 51200         │
+└─────────┬──────────────┘                                └─────────┬──────────────┘
+          │                                                         │
+   ┌──────▼──────┐                                           ┌──────▼──────┐
+   │   moviedb   │                                           │  bookingdb  │
+   │  PostgreSQL │                                           │  PostgreSQL │
+   └─────────────┘                                           └─────────────┘
+```
+
+### Conceptos Clave Implementados:
+1. **Arquitectura Hexagonal:** Separación rigurosa de capas (`api/dto`, `application`, `domain`, `infrastructure`, `exception`). El dominio (`domain`) es puro y está libre de dependencias de Spring o JPA.
+2. **Entidades con Dominio Rico (DDD):** La lógica de negocio y las invariantes se protegen en la propia entidad (ej. `Screening.reserve()` valida que `availableSeats > 0` arrojando `NoSeatsAvailableException` y `Booking.cancel()` valida el estado).
+3. **Flujo SAGA Orquestado:** `booking-service` coordina la transacción usando variables de estado locales (`bookingId`, `seatReserved`), transacciones aisladas por paso y compensaciones *best-effort* con absorción de errores.
+4. **Snapshot de Datos:** Al crear una reserva se guarda una copia del título de la película (`movieTitle`), evitando dependencias innecesarias de lectura hacia `movie-service` en consultas posteriores.
+5. **Resiliencia con @Retry:** Reintentos automáticos configurados en `application.yml` (máximo 3 intentos con 500 ms de espera) ante caídas de red o fallos de infraestructura.
+6. **Estándar RFC 7807:** Todas las respuestas de error utilizan el formato estándar `ProblemDetail`.
 
 ---
 
-## Instrucciones de Arranque
+## 💻 2. Prerrequisitos para Ejecutar
 
-### Prerrequisitos
-*   **Java 21+** instalado.
-*   **Docker** para levantar la base de datos PostgreSQL.
-*   Maven configurado en el sistema.
+Antes de comenzar, asegúrate de tener instalado en tu máquina:
 
-### 1. Levantar la Base de Datos
-Desde la raíz del proyecto:
+1. **Herramienta de descompresión:** Utilidad nativa de Windows/Linux/macOS, WinRAR, 7-Zip, etc., para descomprimir el archivo `.zip` del proyecto.
+2. **Java JDK 21** o superior instalado y configurado en tu variable `PATH` (comprueba con `java -version`).
+3. **Docker Desktop** (o Docker Engine en Linux) corriendo para levantar PostgreSQL.
+4. *(Opcional)* Maven instalado. Si no tienes Maven global, ¡no te preocupes! El proyecto incluye el Maven Wrapper (`./mvnw` en Linux/Mac o `mvnw.cmd` en Windows) en todos los módulos.
+
+> [!NOTE]
+> **Puertos requeridos libres:** Asegúrate de que los puertos `5432` (Postgres), `50003` (Auth), `51100` (Movie) y `51200` (Booking) no estén ocupados por otras aplicaciones.
+
+---
+
+## 🚀 3. Paso a Paso para Levantar el Proyecto
+
+Sigue este orden exacto abriendo terminales independientes para cada componente.
+
+### Paso 3.1: Descomprimir el proyecto y ubicarse en la carpeta raíz
+1. Haz clic derecho sobre el archivo `.zip` recibido y selecciona **"Extraer aquí"** (o en la carpeta de tu preferencia, ej. en el Escritorio).
+2. Abre una terminal (PowerShell, CMD o terminal de Linux/macOS).
+3. Navega hacia la carpeta raíz que acabas de descomprimir:
+```bash
+cd <ruta_de_la_carpeta_descomprimida>
+```
+*(Verifica que al hacer `dir` o `ls` veas las carpetas `auth-service`, `movie-service`, `booking-service`, `docker`, etc.)*
+
+---
+
+### Paso 3.2: Iniciar la Base de Datos con Docker
+Desde la raíz del proyecto, ejecuta:
 ```bash
 docker compose up -d
 ```
-Levanta PostgreSQL (`cinema-postgres`, puerto `5432`, usuario `admin` / contraseña `password`) y ejecuta `docker/init-db/create-databases.sql` en el primer arranque para crear `moviedb` y `bookingdb`.
+Esto descargará la imagen oficial de PostgreSQL 15 y ejecutará automáticamente el script `docker/init-db/create-databases.sql`, creando las dos bases de datos necesarias: `moviedb` y `bookingdb`.
 
-### 2. Levantar el Auth-Service
+**¿Cómo verificar que levantó bien?**
 ```bash
-cd auth-service
-mvn clean compile spring-boot:run
+docker ps
 ```
-Es el emisor (Issuer) de los JWT en el puerto `50003` (`http://localhost:50003`), expone OIDC Discovery y JWKS. **Debe estar arriba antes** que los microservicios, ya que validan el `issuer-uri` al arrancar.
+Deberías ver el contenedor `cinema-postgres` en estado *Up* y saludable (*healthy*).
 
-Clientes registrados:
-*   `cinema-client` / secreto `cinema-secret` → `client_credentials` (automatizable con curl/Postman).
-*   `cinema-swagger` (público, PKCE) → `authorization_code` para los Swagger UI.
+---
 
-Usuarios en memoria para el flujo de login: `demo`/`demo` y `admin`/`admin`.
+### Paso 3.3: Iniciar `auth-service` (Terminal 1)
+El servicio de autenticación emite los tokens JWT y expone la clave pública JWKS. **Debe arrancarse primero** para que los demás microservicios puedan validar su emisor (`issuer-uri`).
 
-### 3. Compilar e Iniciar los Servicios
-Orden recomendado: **Docker → auth-service → movie-service → booking-service**. En dos terminales separadas:
+Abre la **Terminal 1**:
+* **En Windows:**
+  ```cmd
+  cd auth-service
+  mvnw.cmd spring-boot:run
+  ```
+  *(O con Maven global: `mvn spring-boot:run`)*
+* **En Linux / macOS:**
+  ```bash
+  cd auth-service
+  ./mvnw spring-boot:run
+  ```
 
-**Para Movie Service:**
+**¿Cómo saber que está listo?**
+Verás en consola `Started AuthServiceApplication in ... seconds` en el puerto `50003`.
+Puedes verificar abriendo en tu navegador:
+[http://localhost:50003/.well-known/openid-configuration](http://localhost:50003/.well-known/openid-configuration)
+
+---
+
+### Paso 3.4: Iniciar `movie-service` (Terminal 2)
+Este servicio gestiona películas y funciones. Al arrancar, Flyway creará las tablas automáticamente y poblará la base de datos con los datos de muestra iniciales (2 películas y 3 funciones).
+
+Abre la **Terminal 2**:
+* **En Windows:**
+  ```cmd
+  cd movie-service
+  mvnw.cmd spring-boot:run
+  ```
+* **En Linux / macOS:**
+  ```bash
+  cd movie-service
+  ./mvnw spring-boot:run
+  ```
+
+**¿Cómo saber que está listo?**
+Verás `Started MovieServiceApplication in ... seconds` en el puerto `51100`.
+Abre Swagger UI en tu navegador para comprobarlo:
+👉 [http://localhost:51100/api/v1/swagger-ui.html](http://localhost:51100/api/v1/swagger-ui.html) *(o [http://localhost:51100/swagger-ui.html](http://localhost:51100/swagger-ui.html))*
+
+---
+
+### Paso 3.5: Iniciar `booking-service` (Terminal 3)
+Este es el orquestador del SAGA que administra las reservas de los clientes.
+
+Abre la **Terminal 3**:
+* **En Windows:**
+  ```cmd
+  cd booking-service
+  mvnw.cmd spring-boot:run
+  ```
+* **En Linux / macOS:**
+  ```bash
+  cd booking-service
+  ./mvnw spring-boot:run
+  ```
+
+**¿Cómo saber que está listo?**
+Verás `Started BookingServiceApplication in ... seconds` en el puerto `51200`.
+Abre su Swagger UI en tu navegador:
+👉 [http://localhost:51200/api/v1/swagger-ui.html](http://localhost:51200/api/v1/swagger-ui.html) *(o [http://localhost:51200/swagger-ui.html](http://localhost:51200/swagger-ui.html))*
+
+---
+
+## 🔑 4. Obtención del Token JWT
+
+Los endpoints de consulta (`GET`) son públicos, pero los endpoints de escritura (`POST`, `PUT`, `DELETE`, `PATCH`) requieren un token Bearer JWT.
+
+Puedes obtenerlo fácilmente abriendo una cuarta terminal y ejecutando:
+
+### Opción A: Mediante cURL (Linux / macOS / Git Bash / CMD)
 ```bash
-cd movie-service
-mvn clean compile spring-boot:run
-```
-*(Flyway creará automáticamente las tablas e insertará las películas y funciones de prueba).*
-
-**Para Booking Service:**
-```bash
-cd booking-service
-mvn clean compile spring-boot:run
+curl -X POST http://localhost:50003/oauth2/token \
+  -u cinema-client:cinema-secret \
+  -d "grant_type=client_credentials" \
+  -d "scope=cinema"
 ```
 
-### 4. Pruebas y Uso
-Una vez iniciados:
-1. Obtén un token:
-   ```bash
-   curl -u cinema-client:cinema-secret -d grant_type=client_credentials -d scope=cinema http://localhost:50003/oauth2/token
-   ```
-   O bien ejecuta en Postman el request **Auth Service → Get Token (client_credentials)**, que guarda el token en la variable `TOKEN`.
-2. Accede a los Swagger UI y pega el token en **Authorize** (Bearer JWT), o usa la colección `postman/Cinema_System.postman_collection.json`.
-3. Realiza la prueba del camino feliz creando una reserva en `POST /bookings` (201 + estado `CONFIRMED`).
-4. Verifica que el asiento se ha descontado llamando a `GET /screenings/{id}`. El `booking-service` reenvía el JWT recibido hacia `movie-service` (token relay), por lo que `PATCH /screenings/{id}/reserve` autentica correctamente.
-5. Cancela la reserva con `PATCH /bookings/{id}/cancel` (SAGA inverso: libera el asiento) o intenta reservar en una sala llena para ver la compensación en los logs del `booking-service` (`Fallo al reservar asiento. Ejecutando compensación`).
+### Opción B: Mediante PowerShell (Windows)
+```powershell
+$headers = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("cinema-client:cinema-secret")) }
+$body = @{ grant_type = "client_credentials"; scope = "cinema" }
+$response = Invoke-RestMethod -Uri "http://localhost:50003/oauth2/token" -Method Post -Headers $headers -Body $body
+$response.access_token
+```
+
+Copia el valor de `access_token`. En las interfaces de Swagger UI puedes hacer clic en el botón verde **Authorize** arriba a la derecha y escribir:
+```text
+Bearer <tu_token_aqui>
+```
+
+---
+
+## 🧪 5. Guía de Demostración del Flujo SAGA (Para Evaluar)
+
+Para demostrar en vivo que todo funciona y presentar el proyecto al profesor o revisores, sigue este flujo paso a paso:
+
+### 1. Consultar la Cartelera Inicial (Sin Token)
+Consulta las películas y funciones cargadas automáticamente por Flyway:
+* **GET** `http://localhost:51100/movies`
+* **GET** `http://localhost:51100/screenings`
+
+Anota el `id` de una función con asientos disponibles (por ejemplo, la función en IMAX con ID `73d2a76f-005a-4b96-b072-cd414e5b22b6` que inicia con 45 asientos).
+
+---
+
+### 2. Camino Feliz: Reserva Exitosa (SAGA Completo)
+Realiza una reserva enviando el token en el header `Authorization: Bearer <TOKEN>`:
+
+* **POST** `http://localhost:51200/bookings`
+```json
+{
+  "screeningId": "73d2a76f-005a-4b96-b072-cd414e5b22b6",
+  "customerId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "totalAmount": 12.50
+}
+```
+
+**Resultado esperado:**
+* **Status:** `201 Created`
+* **Header:** `Location: http://localhost:51200/bookings/{bookingId}`
+* **Body:** Estado `"status": "CONFIRMED"`, con el `movieTitle` copiado como snapshot.
+* **Verificación:** Si consultas de nuevo `GET http://localhost:51100/screenings/73d2a76f-005a-4b96-b072-cd414e5b22b6`, verás que `availableSeats` se redujo a **44**.
+
+---
+
+### 3. Caso de Negocio: Intento de Reserva sin Asientos (422 Inmediato)
+Crea una función con 0 asientos o reserva en una que ya no tenga cupos disponibles.
+
+* **POST** `http://localhost:51200/bookings` hacia una función agotada.
+
+**Resultado esperado:**
+* **Status:** `422 Unprocessable Entity`
+* **Formato RFC 7807:**
+  ```json
+  {
+    "type": "about:blank",
+    "title": "Invalid Booking State",
+    "status": 422,
+    "detail": "Función sin asientos disponibles"
+  }
+  ```
+* **Comportamiento SAGA:** No se crea la reserva en la base de datos ni se descuentan asientos.
+
+---
+
+### 4. SAGA Inverso: Cancelación de Reserva y Compensación
+Cancela la reserva que creaste en el paso 2:
+
+* **PATCH** `http://localhost:51200/bookings/{bookingId}/cancel`
+  *(Con header `Authorization: Bearer <TOKEN>`)*
+
+**Resultado esperado:**
+* **Status:** `200 OK`
+* **Body:** Estado `"status": "CANCELLED"`.
+* **Verificación:** Vuelve a consultar la función en `movie-service` (`GET /screenings/{id}`). Comprobarás que el asiento volvió a liberarse y `availableSeats` regresó a **45**.
+
+---
+
+## 📮 6. Colección de Postman Incluida
+
+Si prefieres no usar Swagger o cURL manualmente, en la carpeta `postman/` tienes todo listo para importar:
+1. `postman/Cinema_Environment.postman_environment.json`: Contiene las variables `baseUrl_movie`, `baseUrl_booking`, `authUrl` y guarda automáticamente el token en `TOKEN`.
+2. `postman/Cinema_System.postman_collection.json`: Incluye todas las peticiones organizadas por servicio y ordenadas secuencialmente para ejecutar la demo del SAGA en un clic.
+
+---
+
+## ⚠️ 7. Formato de Errores Estándar (RFC 7807)
+
+Todos los errores del sistema cumplen con la especificación `application/problem+json`:
+
+| Código HTTP | Causa |
+| :--- | :--- |
+| **`400 Bad Request`** | Error de validación `@Valid` (campos obligatorios nulos, números negativos) o JSON malformado. |
+| **`401 Unauthorized`** | Token JWT no enviado o inválido en endpoints de escritura. |
+| **`404 Not Found`** | Identificador UUID de película, función o reserva inexistente. |
+| **`422 Unprocessable Entity`** | Violación de invariante de negocio: función sin asientos disponibles o reserva ya cancelada. |
+| **`502 Bad Gateway`** | Fallo de comunicación entre servicios tras agotar los 3 reintentos de resiliencia (`@Retry`). |
+
+---
+
+## 🛠️ 8. Preguntas Frecuentes y Solución de Problemas
+
+* **¿Error de conexión a PostgreSQL (`Connection refused`)?**  
+  Asegúrate de que Docker Desktop esté encendido y que hayas ejecutado `docker compose up -d`.
+* **¿Error de autenticación al arrancar los servicios (`Could not obtain connection to issuer`)?**  
+  Recuerda que `auth-service` debe estar levantado en el puerto `50003` antes de arrancar `movie-service` y `booking-service`.
+* **¿Cómo compilar todo desde la consola para comprobar que no hay errores?**  
+  Ejecuta `mvn compile` (o `./mvnw compile`) en la carpeta de cada servicio. Todos compilarán con `BUILD SUCCESS`.
+
+---
+
+¡Éxitos en la presentación y revisión del proyecto! 🎉

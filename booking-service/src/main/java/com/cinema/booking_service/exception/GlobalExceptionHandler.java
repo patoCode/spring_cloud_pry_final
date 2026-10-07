@@ -2,10 +2,12 @@ package com.cinema.booking_service.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.net.URI;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
@@ -25,12 +27,30 @@ public class GlobalExceptionHandler {
         return problemDetail;
     }
 
+    @ExceptionHandler(SagaFailedException.class)
+    public ProblemDetail handleSagaFailure(SagaFailedException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_GATEWAY, ex.getMessage());
+        problemDetail.setTitle("SAGA Execution Failed");
+        problemDetail.setType(URI.create("https://httpstatuses.com/502"));
+        problemDetail.setProperty("movieService", ex.getCause() != null ? ex.getCause().toString() : null);
+        return problemDetail;
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidation(MethodArgumentNotValidException ex) {
         String errors = ex.getBindingResult().getFieldErrors().stream()
                 .map(err -> err.getField() + ": " + err.getDefaultMessage())
                 .collect(Collectors.joining(", "));
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Validation failed: " + errors);
+        problemDetail.setTitle("Bad Request");
+        return problemDetail;
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ProblemDetail handleUnreadable(HttpMessageNotReadableException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "Malformed JSON request body: " + ex.getMessage());
         problemDetail.setTitle("Bad Request");
         return problemDetail;
     }

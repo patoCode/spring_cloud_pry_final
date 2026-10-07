@@ -38,4 +38,17 @@ public class ScreeningEntity {
 
     @Builder.Default
     private boolean active = true;
+
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    @PrePersist
+    void prePersist() {
+        // Garantiza version != null en el INSERT: si no, Spring Data trataría la
+        // entidad como nueva en el siguiente save() (isNew() == version == null).
+        if (this.version == null) {
+            this.version = 0L;
+        }
+    }
 }

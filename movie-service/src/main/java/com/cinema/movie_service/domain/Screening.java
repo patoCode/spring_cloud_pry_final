@@ -16,12 +16,16 @@ import java.util.UUID;
 public class Screening {
     private UUID id;
     private UUID movieId;
+    // Denormalizado desde el catálogo de películas: no se persiste en la tabla screenings.
+    private String movieTitle;
     private String room;
     private LocalDateTime showAt;
     private Integer totalSeats;
     private Integer availableSeats;
     @Builder.Default
     private boolean active = true;
+    // Bloqueo optimista (@Version): detecta escrituras concurrentes sobre la misma función.
+    private Long version;
 
     public void reserve() {
         if (this.availableSeats == null || this.availableSeats <= 0) {

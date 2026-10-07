@@ -7,6 +7,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.util.UUID;
@@ -26,11 +28,15 @@ public class MovieServiceClientAdapter implements MovieServiceClientPort {
                 .body(ScreeningDto.class);
     }
 
+    /**
+     * Paso 3 del SAGA. Solo se reintentan fallos transitorios (red / 5xx):
+     * un 422 por falta de asientos es un error de negocio y se propaga de inmediato.
+     */
     @Override
     @Retryable(
-      retryFor = {RuntimeException.class},
-      maxAttempts = 3,
-      backoff = @Backoff(delay = 500)
+      retryFor = {ResourceAccessException.class, HttpServerErrorException.class},
+      maxAttemptsExpression = "${retry.max-attempts:3}",
+      backoff = @Backoff(delayExpression = "${retry.backoff-delay:500}")
     )
     public void reserveSeat(UUID screeningId) {
         log.info("Attempting to reserve seat for screening: {}", screeningId);

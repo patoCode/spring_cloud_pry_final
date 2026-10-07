@@ -5,9 +5,14 @@ import com.cinema.movie_service.api.dto.MovieResponse;
 import com.cinema.movie_service.application.MovieService;
 import com.cinema.movie_service.domain.Movie;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
@@ -26,7 +31,17 @@ public class MovieController {
     private final MovieService service;
 
     @PostMapping
-    @Operation(summary = "Create a new movie")
+    @Operation(summary = "Create a new movie", description = "Crea una película. Requiere JWT.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Película creada con header Location",
+                    content = @Content(schema = @Schema(implementation = MovieResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Validación de campos fallida",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "JWT ausente o inválido",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "422", description = "Violación de una regla de negocio",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<MovieResponse> createMovie(@Valid @RequestBody MovieRequest request) {
         Movie movie = Movie.builder()
                 .title(request.getTitle())
@@ -37,29 +52,49 @@ public class MovieController {
                 .active(true)
                 .build();
         Movie saved = service.create(movie);
-        
+
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
                 .buildAndExpand(saved.getId())
                 .toUri();
-                
+
         return ResponseEntity.created(location).body(toResponse(saved));
     }
 
     @GetMapping
-    @Operation(summary = "Get all movies")
+    @Operation(summary = "Get all movies", description = "Listado completo del catálogo de películas.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Listado de películas",
+                    content = @Content(schema = @Schema(implementation = MovieResponse.class)))
+    })
     public ResponseEntity<List<MovieResponse>> getAllMovies() {
         return ResponseEntity.ok(service.getAll().stream().map(this::toResponse).collect(Collectors.toList()));
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get a movie by ID")
+    @Operation(summary = "Get a movie by ID", description = "Devuelve una película por su UUID.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Película encontrada",
+                    content = @Content(schema = @Schema(implementation = MovieResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Película inexistente",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<MovieResponse> getMovieById(@PathVariable UUID id) {
         return ResponseEntity.ok(toResponse(service.getById(id)));
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Update an existing movie")
+    @Operation(summary = "Update an existing movie", description = "Actualiza todos los campos de una película. Requiere JWT.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Película actualizada",
+                    content = @Content(schema = @Schema(implementation = MovieResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Validación de campos fallida",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "JWT ausente o inválido",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "Película inexistente",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<MovieResponse> updateMovie(@PathVariable UUID id, @Valid @RequestBody MovieRequest request) {
         Movie movie = Movie.builder()
                 .title(request.getTitle())
@@ -72,20 +107,43 @@ public class MovieController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete a movie by ID")
+    @Operation(summary = "Delete a movie by ID", description = "Elimina una película. Requiere JWT.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Película eliminada", content = @Content),
+            @ApiResponse(responseCode = "401", description = "JWT ausente o inválido",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "Película inexistente",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<Void> deleteMovie(@PathVariable UUID id) {
         service.delete(id);
         return ResponseEntity.noContent().build();
     }
 
     @PatchMapping("/{id}/activate")
-    @Operation(summary = "Activate a movie")
+    @Operation(summary = "Activate a movie", description = "Reactiva una película en cartelera. Requiere JWT.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Película activada",
+                    content = @Content(schema = @Schema(implementation = MovieResponse.class))),
+            @ApiResponse(responseCode = "401", description = "JWT ausente o inválido",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "Película inexistente",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<MovieResponse> activateMovie(@PathVariable UUID id) {
         return ResponseEntity.ok(toResponse(service.setStatus(id, true)));
     }
 
     @PatchMapping("/{id}/deactivate")
-    @Operation(summary = "Deactivate a movie")
+    @Operation(summary = "Deactivate a movie", description = "Saca una película de cartelera. Requiere JWT.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Película desactivada",
+                    content = @Content(schema = @Schema(implementation = MovieResponse.class))),
+            @ApiResponse(responseCode = "401", description = "JWT ausente o inválido",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "Película inexistente",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<MovieResponse> deactivateMovie(@PathVariable UUID id) {
         return ResponseEntity.ok(toResponse(service.setStatus(id, false)));
     }
